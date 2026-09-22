@@ -1,230 +1,211 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'wouter';
 import { useAuth } from '@/hooks/useAuth';
-import { useUrlState, useScrollToElement } from '@/hooks/useUrlState';
-import { careerRoadmapService } from '@/services/careerRoadmapService';
-import type { CareerRoadmap, CareerRoadmapSummary } from '@/types/api';
-import { 
-  RoadmapHeaderSkeleton, 
-  ModuleListSkeleton 
-} from '@/components/skeletons/RoadmapSkeleton';
+import { journeyService } from '@/services/journeyService';
 import { NoRoadmapContent } from '@/components/empty-states/EmptyStates';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Clock } from 'lucide-react';
-import { HeroSection, JourneyTimeline, ProgressSidebar } from '@/components/learning';
-
-function slugify(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
-}
-
-function calculateCareerStats(career?: CareerRoadmap | null) {
-  if (!career) {
-    return { modules: 0, weeks: 0, days: 0, topics: 0, resources: 0, progress: 0, xp: 0, streak: 0 };
-  }
-
-  const modules = career.modules ?? [];
-  let totalTopics = 0, completedTopics = 0;
-
-  modules.forEach(module => {
-    module.weeks?.forEach(week => {
-      week.days?.forEach(day => {
-        day.topics?.forEach(topic => {
-          totalTopics += 1;
-          const resources = (topic as any).resources || [];
-          const completed = resources.filter((r: any) => r.completed).length;
-          if (resources.length > 0 && completed === resources.length) {
-            completedTopics += 1;
-          }
-        });
-      });
-    });
-  });
-
-  const totalWeeks = modules.reduce((sum, m) => sum + (m.weeks?.length ?? 0), 0);
-  const totalDays = modules.reduce((sum, m) => sum + (m.weeks?.reduce((s, w) => s + (w.days?.length ?? 0), 0) ?? 0), 0);
-  const progress = totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0;
-  const xp = completedTopics * 100; // 100 XP per completed topic
-  const streak = Math.floor(completedTopics / 5); // 1 streak per 5 completed topics
-
-  return { 
-    modules: modules.length, 
-    weeks: totalWeeks, 
-    days: totalDays, 
-    topics: totalTopics, 
-    resources: 0, 
-    progress,
-    xp,
-    streak,
-  };
-}
+import { Button } from '@/components/ui/button';
+import { BookOpen, CheckCircle2, Circle, Loader2, Sparkles, Target } from 'lucide-react';
 
 export default function Roadmap() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [selectedSlug, setSelectedSlug] = useState('');
-  const urlState = useUrlState();
-  useScrollToElement(urlState.resourceId);
 
-  const { data: careersData, isLoading: careersLoading } = useQuery({
-    queryKey: ['published-career-roadmaps'],
-    queryFn: async () => {
-      const all = await careerRoadmapService.listCareers();
-      return all.filter(c => c.status === 'published');
-    },
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['journey-dashboard'],
+    queryFn: journeyService.getDashboard,
     retry: false,
+    staleTime: 60_000,
   });
 
-  const careers = useMemo(() => careersData ?? [], [careersData]);
-
-  const effectiveSelectedSlug = selectedSlug || (user?.careerTrack ? slugify(user.careerTrack) : careers[0]?.slug) || '';
-
-  const activeCareer = useMemo(() => {
-    return careers.find((career) => career.slug === effectiveSelectedSlug) || careers[0] || null;
-  }, [careers, effectiveSelectedSlug]);
-
-  const careerQuery = useQuery({
-    queryKey: ['career-roadmap-progress', activeCareer?.id],
-    queryFn: () => {
-      if (!activeCareer?.id) return Promise.resolve(null);
-      if (activeCareer.status !== 'published') return Promise.resolve(null);
-      return careerRoadmapService.getCareerWithProgress(activeCareer.id);
-    },
-    enabled: Boolean(activeCareer?.id && activeCareer.status === 'published'),
-    retry: false,
-  });
-
-  const completeResourceMutation = useMutation({
-    mutationFn: (resourceId: string) => careerRoadmapService.completeResource(resourceId),
+  const regenerateMutation = useMutation({
+    mutationFn: () => journeyService.regenerateRoadmap(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['career-roadmap-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['journey-dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
     },
   });
 
-  const handleResourceComplete = useCallback((resourceId: string) => {
-    completeResourceMutation.mutate(resourceId);
-  }, [completeResourceMutation]);
+  const journey = data?.currentJourney ?? null;
 
-  const career = careerQuery.data ?? null;
-  const stats = calculateCareerStats(career);
-  const hasRoadmap = Boolean(career?.modules?.length && career.modules.some((m: any) => (m.weeks?.length ?? 0) > 0));
-
-  if (careersLoading || careerQuery.isLoading) {
+  if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-        <div className="max-w-6xl mx-auto px-4 py-8">
-          <RoadmapHeaderSkeleton />
-          <div className="mt-8">
-            <ModuleListSkeleton />
+      <div className="min-h-screen bg-slate-50 p-6">
+        <div className="mx-auto max-w-6xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <div className="mb-2 h-4 w-36 animate-pulse rounded bg-slate-200" />
+              <div className="h-10 w-72 animate-pulse rounded bg-slate-200" />
+            </div>
+            <div className="h-10 w-28 animate-pulse rounded-full bg-slate-200" />
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            {[1, 2, 3].map((item) => (
+              <div key={item} className="h-28 animate-pulse rounded-2xl bg-slate-200" />
+            ))}
           </div>
         </div>
       </div>
     );
   }
 
-  if (!hasRoadmap) {
-    return (
-      <NoRoadmapContent
-        careerGoal={activeCareer?.title || activeCareer?.name || user?.careerTrack || 'your career'}
-      />
-    );
+  if (error || !journey || !journey.roadmapDays?.length) {
+    return <NoRoadmapContent careerGoal={user?.careerTrack || user?.careerGoal || 'your career'} />;
   }
 
-  const handleContinueLearning = () => {
-    // Scroll to first incomplete lesson
-    const firstIncomplete = document.querySelector('[data-state="current"]');
-    firstIncomplete?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
+  const roadmapDays = journey.roadmapDays ?? [];
+  const activeDay = roadmapDays.find((day) => day.dayNumber === journey.currentDay) ?? roadmapDays[0];
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 dark:from-slate-950 dark:via-blue-950 dark:to-slate-900 overflow-x-hidden">
-      <div className="w-full mx-auto space-y-8">
-        
-        {/* Hero Section */}
-        {hasRoadmap && career && (
-          <HeroSection
-            career={career}
-            progress={stats.progress}
-            xp={stats.xp}
-            streak={stats.streak}
-            onContinue={handleContinueLearning}
-          />
-        )}
-
-        {/* Career Selector */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-          className="bg-white dark:bg-slate-800 rounded-2xl border-2 border-slate-200 dark:border-slate-700 shadow-md p-6 hover:shadow-lg transition-shadow"
-        >
-          <label className="block text-sm font-bold text-slate-900 dark:text-white mb-3 uppercase tracking-wide">
-            Select Your Learning Path
-          </label>
-          <Select value={selectedSlug} onValueChange={setSelectedSlug}>
-            <SelectTrigger className="h-12 rounded-xl text-base border-2 border-slate-300 dark:border-slate-600 focus:border-blue-500 dark:bg-slate-700 dark:text-white">
-              <SelectValue placeholder="Choose a career path" />
-            </SelectTrigger>
-            <SelectContent>
-              {careers.map((careerOption: CareerRoadmapSummary) => (
-                <SelectItem key={careerOption.slug} value={careerOption.slug}>
-                  {careerOption.title || careerOption.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </motion.div>
-
-        {/* Main Content Grid */}
-        {hasRoadmap && career?.modules ? (
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-3 lg:grid-cols-4">
-            {/* Journey Timeline - Main Content */}
-            <div className="col-span-1 md:col-span-2 lg:col-span-3 w-full">
-              <JourneyTimeline
-                career={career}
-                onLessonClick={(lessonId) => {
-                  console.log('Lesson clicked:', lessonId);
-                  // Handle lesson click - could navigate to lesson detail page
-                }}
-              />
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8">
+      <div className="mx-auto max-w-6xl space-y-8">
+        <header className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-blue-600">Your Career Roadmap</p>
+              <h1 className="text-3xl font-black text-slate-900 md:text-4xl">{journey.roadmapTitle || journey.careerTitle}</h1>
+              <p className="mt-2 text-slate-600">
+                Target role: <span className="font-semibold text-slate-900">{journey.careerTitle}</span>
+              </p>
             </div>
-
-            {/* Progress Sidebar */}
-            <div className="col-span-1 w-full">
-              <ProgressSidebar
-                currentLevel={Math.floor(stats.xp / 1000) + 1}
-                totalXp={stats.xp}
-                streak={stats.streak}
-                currentWeek={Math.ceil(stats.topics / 7) || 1}
-                currentDay={Math.ceil((stats.topics % 7) || 1)}
-                dailyGoal={{ lessons: 1, xp: 100 }}
-                achievements={[
-                  { id: '1', title: 'First Steps', icon: '🚀', unlockedAt: new Date() },
-                  { id: '2', title: 'Week One', icon: '⭐', unlockedAt: new Date(Date.now() - 86400000) },
-                ]}
-              />
+            <div className="flex items-center gap-3">
+              <div className="rounded-full bg-blue-100 px-4 py-2 text-sm font-semibold text-blue-700">
+                {journey.completionPercentage ?? 0}% complete
+              </div>
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => {
+                  if (window.confirm('This will refresh your personalized roadmap from your latest assessment and keep any completed work intact.')) {
+                    regenerateMutation.mutate();
+                  }
+                }}
+                disabled={regenerateMutation.isPending}
+              >
+                {regenerateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                Regenerate Roadmap
+              </Button>
+              <Link href="/dashboard">
+                <Button variant="outline" className="gap-2">
+                  <BookOpen className="h-4 w-4" />
+                  Dashboard
+                </Button>
+              </Link>
             </div>
           </div>
-        ) : (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-            className="text-center py-24 bg-white dark:bg-slate-800 rounded-2xl border-2 border-slate-200 dark:border-slate-700 shadow-md hover:shadow-lg transition-shadow"
-          >
-            <div className="inline-flex items-center justify-center h-16 w-16 bg-blue-100 dark:bg-blue-900 rounded-full mb-4">
-              <Clock className="h-8 w-8 text-blue-600 dark:text-blue-400" />
+        </header>
+
+        <section className="grid gap-4 md:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Overall Progress</p>
+            <p className="mt-3 text-3xl font-black text-slate-900">{journey.completionPercentage ?? 0}%</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Current Day</p>
+            <p className="mt-3 text-3xl font-black text-slate-900">Day {journey.currentDay ?? activeDay?.dayNumber ?? 1}</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Skills completed</p>
+            <p className="mt-3 text-3xl font-black text-slate-900">{journey.completedSkills?.length ?? 0}</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">XP</p>
+            <p className="mt-3 text-3xl font-black text-slate-900">{journey.xp ?? 0}</p>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-slate-800">
+              <Target className="h-5 w-5 text-blue-600" />
+              <h2 className="text-xl font-bold">Milestones</h2>
             </div>
-            <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">
-              No Learning Path Selected
-            </h3>
-            <p className="text-slate-600 dark:text-slate-400 max-w-sm mx-auto text-lg">
-              Choose a career path above to start your personalized learning journey. Get ready to transform your skills!
-            </p>
-          </motion.div>
-        )}
+            <div className="rounded-full bg-emerald-100 px-3 py-1.5 text-sm font-semibold text-emerald-700">
+              {journey.nextAction || 'Continue learning'}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {roadmapDays.map((day) => {
+              const isCompleted = Number(day.dayNumber) < Number(journey.currentDay ?? 1);
+              const isCurrent = Number(day.dayNumber) === Number(journey.currentDay ?? 1);
+              const isUpcoming = !isCompleted && !isCurrent;
+
+              return (
+                <div
+                  key={`${day.dayNumber}-${day.title || day.focus}`}
+                  className={`rounded-2xl border p-5 ${isCompleted ? 'border-emerald-200 bg-emerald-50' : isCurrent ? 'border-blue-200 bg-blue-50' : 'border-slate-200 bg-slate-50'}`}
+                >
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-start gap-3">
+                      <div className={`mt-1 flex h-8 w-8 items-center justify-center rounded-full ${isCompleted ? 'bg-emerald-500' : isCurrent ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                        {isCompleted ? <CheckCircle2 className="h-4 w-4 text-white" /> : isCurrent ? <Sparkles className="h-4 w-4 text-white" /> : <Circle className="h-4 w-4 text-white" />}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Day {day.dayNumber}</p>
+                        <h3 className="text-xl font-bold text-slate-900">{day.title || day.focus || 'Learning Sprint'}</h3>
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-700">
+                      {isCompleted ? 'Completed' : isCurrent ? 'Current' : 'Upcoming'}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+                    <div>
+                      <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Focus</p>
+                      <p className="text-slate-700">{day.focus || 'Core skill development'}</p>
+
+                      {day.tasks && day.tasks.length > 0 && (
+                        <div className="mt-4">
+                          <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Tasks</p>
+                          <ul className="space-y-2">
+                            {day.tasks.slice(0, 4).map((task) => (
+                              <li key={task.id || `${day.dayNumber}-${task.title}`} className="flex items-start gap-2 text-slate-700">
+                                <span className="mt-1 h-2 w-2 rounded-full bg-blue-500" />
+                                <span>{task.title}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Skills</p>
+                      <div className="flex flex-wrap gap-2">
+                        {(day.topics || []).slice(0, 4).map((topic) => (
+                          <span key={`${day.dayNumber}-${topic}`} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                            {topic}
+                          </span>
+                        ))}
+                      </div>
+                      {day.resources && day.resources.length > 0 && (
+                        <div className="mt-4">
+                          <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Resources</p>
+                          <div className="space-y-2">
+                            {day.resources.slice(0, 2).map((resource, index) => (
+                              <a
+                                key={`${day.dayNumber}-${resource.title || 'resource'}-${index}`}
+                                href={resource.url || '#'}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-700 hover:bg-slate-200"
+                              >
+                                {resource.title || 'Learning resource'}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       </div>
     </div>
   );
 }
+
