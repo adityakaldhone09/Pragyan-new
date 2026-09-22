@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { prisma } from '@/lib/prisma';
 import { careerRoadmapProgressService } from './career-roadmap-progress.service';
 import { BadRequestError } from '@/utils/errors';
+import { recommendationEngineService } from '@/services/recommendation-engine';
+import { roadmapGenerationService } from '@/services/roadmap-generation';
 
 /**
  * GET /api/dashboard
@@ -31,18 +33,52 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
       throw new BadRequestError('User not found');
     }
 
-    // Get current career (recommended or first published)
+    // Prefer the user's assessment-derived career and roadmap when available.
     let currentCareer = null;
 
-    // Fall back to first published career
-    const publishedCareers = await prisma.careerRoadmap.findMany({
-      where: { status: 'published' },
-      select: { id: true, title: true, description: true, modules: { select: { id: true } } },
-      take: 1,
-    });
+    const [topCareer, latestUserRoadmap] = await Promise.all([
+      recommendationEngineService.getTopCareer(userId).catch(() => null),
+      prisma.userRoadmap.findFirst({
+        where: { userId },
+        include: { roadmap: true },
+        orderBy: { updatedAt: 'desc' },
+      }).catch(() => null),
+    ]);
 
-    if (publishedCareers.length > 0) {
-      currentCareer = publishedCareers[0];
+    if (latestUserRoadmap?.roadmap) {
+      currentCareer = {
+        id: latestUserRoadmap.roadmap.id,
+        title: latestUserRoadmap.roadmap.title,
+        description: latestUserRoadmap.roadmap.description || 'Personalized roadmap based on your assessment.',
+        modules: [],
+      };
+    }
+
+    if (!currentCareer && topCareer?.career) {
+      const generated = await roadmapGenerationService
+        .generatePersonalizedRoadmap(userId, topCareer.career, topCareer.match >= 80 ? 'Intermediate' : 'Beginner')
+        .catch(() => null);
+
+      if (generated) {
+        currentCareer = {
+          id: generated.id,
+          title: generated.title,
+          description: generated.description || 'Personalized roadmap based on your assessment.',
+          modules: [],
+        };
+      }
+    }
+
+    if (!currentCareer) {
+      const publishedCareers = await prisma.careerRoadmap.findMany({
+        where: { status: 'published' },
+        select: { id: true, title: true, description: true, modules: { select: { id: true } } },
+        take: 1,
+      });
+
+      if (publishedCareers.length > 0) {
+        currentCareer = publishedCareers[0];
+      }
     }
 
     // Initialize dashboard response
@@ -208,6 +244,43 @@ export async function getDashboardRoadmap(req: Request, res: Response, next: Nex
     res.json({
       success: true,
       data: roadmapWithProgress,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/progress/dashboard/regenerate-roadmap
+ * Regenerate a personalized roadmap using the latest assessment recommendation.
+ */
+export async function regenerateUserRoadmap(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestError('User not authenticated');
+    }
+
+    const topCareer = await recommendationEngineService.getTopCareer(userId);
+    if (!topCareer?.career) {
+      throw new BadRequestError('Complete an assessment to generate a roadmap for your profile.');
+    }
+
+    const roadmap = await roadmapGenerationService.generatePersonalizedRoadmap(
+      userId,
+      topCareer.career,
+      topCareer.match >= 80 ? 'Intermediate' : 'Beginner'
+    );
+
+    res.json({
+      success: true,
+      data: {
+        id: roadmap.id,
+        title: roadmap.title,
+        career: topCareer.career,
+        regeneratedAt: new Date().toISOString(),
+      },
+      message: 'Roadmap regenerated successfully.',
     });
   } catch (error) {
     next(error);

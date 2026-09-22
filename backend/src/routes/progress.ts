@@ -169,4 +169,10 @@ router.get('/dashboard', dashboardController.getDashboard);
  */
 router.get('/dashboard/roadmap/:careerId', dashboardController.getDashboardRoadmap);
 
+/**
+ * POST /api/progress/dashboard/regenerate-roadmap
+ * Regenerate a personalized roadmap using the latest assessment outcome.
+ */
+router.post('/dashboard/regenerate-roadmap', dashboardController.regenerateUserRoadmap);
+
 export default router;
