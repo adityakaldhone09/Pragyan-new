@@ -9,6 +9,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/hooks/useAuth";
 import { careerRoadmapService } from "@/services/careerRoadmapService";
+import { journeyService } from "@/services/journeyService";
 import { csvCareerService } from "@/services/csvCareerService";
 import { assessmentService } from "@/services/assessmentService";
 import { findNextIncompleteResource } from "@/services/nextResourceService";
@@ -32,7 +33,13 @@ export default function Dashboard() {
   // Fetch unified dashboard data
   const { data: dashboard, isLoading } = useQuery({
     queryKey: ["dashboard"],
-    queryFn: careerRoadmapService.getDashboard,
+    queryFn: async () => {
+      try {
+        return await journeyService.getDashboard();
+      } catch {
+        return await careerRoadmapService.getDashboard();
+      }
+    },
     retry: false,
     staleTime: 1000 * 60 * 2,
     refetchOnWindowFocus: false,
@@ -118,18 +125,20 @@ export default function Dashboard() {
     );
   }
 
-  const hasCareer = !!dashboard?.currentCareer;
+  const journey = (dashboard as any)?.currentJourney ?? null;
+  const currentCareerTitle = journey?.careerTitle || dashboard?.currentCareer?.title || "Career Journey";
+  const hasCareer = !!(dashboard?.currentCareer || journey?.careerTitle);
   
   if (!hasCareer && !isLoading) {
     return <NoCareerSelected />;
   }
 
-  const progress = dashboard?.overallProgress || 0;
+  const progress = Number(journey?.completionPercentage ?? dashboard?.overallProgress ?? 0);
   const weekProgress = dashboard?.weeklyProgress || 0;
   const todayCompleted = dashboard?.completedToday || 0;
   const todayGoal = dashboard?.todayGoal || 2;
-  const xp = dashboard?.xp || 0;
-  const streak = dashboard?.streak || 0;
+  const xp = Number(journey?.xp ?? dashboard?.xp ?? user?.xp ?? 0);
+  const streak = Number(journey?.streak ?? dashboard?.streak ?? user?.streak ?? 0);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -163,7 +172,7 @@ export default function Dashboard() {
                       <div>
                         <p className="text-sm text-slate-600 font-medium">Current Path</p>
                         <h3 className="text-2xl font-bold text-slate-900 mt-1">
-                          {dashboard.currentCareer.title}
+                          {currentCareerTitle}
                         </h3>
                       </div>
                       <Link href={continueHref}>
