@@ -31,13 +31,18 @@ export function NoRoadmapContent({
       <div className="bg-amber-100 rounded-full p-4 mb-4">
         <BookOpen className="w-8 h-8 text-amber-600" />
       </div>
-      <h3 className="text-2xl font-bold text-slate-900 mb-2">No Roadmap Yet</h3>
+      <h3 className="text-2xl font-bold text-slate-900 mb-2">Roadmap is being generated</h3>
       <p className="text-slate-600 text-center max-w-md mb-6">
-        Your learning path for {careerGoal} is being prepared. Check back soon!
+        Your personalized roadmap for {careerGoal} is being prepared from your latest assessment results.
       </p>
-      <p className="text-sm text-slate-500 text-center max-w-md">
-        Contact your administrator to create and publish a learning path.
+      <p className="text-sm text-slate-500 text-center max-w-md mb-6">
+        Please try again in a moment or complete the assessment if you have not done so yet.
       </p>
+      <Link href="/assessments">
+        <Button className="bg-blue-600 hover:bg-blue-700 text-white rounded-full px-6">
+          Start Assessment
+        </Button>
+      </Link>
     </div>
   );
 }
